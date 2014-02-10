@@ -10,7 +10,18 @@ from sklearn.cluster import DBSCAN
 from sklearn import metrics
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn import preprocessing
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+from sklearn.cluster import MiniBatchKMeans, KMeans
+
 import pylab as pl
+
+
+from pandas.io import sql
+import MySQLdb
+
 
 def  data_import(path):
 	"""
@@ -57,10 +68,6 @@ def get_subset(df):
 	df_sample.to_csv('./subset_10.csv')
 	return df_sample
 
-def  explore(df):
-	print 'ADDRESS'
-	print df['ADDRESS']
-
 def  urlRequest(url):
 	response = urllib2.urlopen(url)
 	l = response.read().split('\n')
@@ -101,21 +108,29 @@ def  dbscan(path):
 	"""
 	
 	list_of_feature =['ZIP','BED','HALF_BATH','BATH','YR_BUILT','FLOORS','LAND_VAL1','BLDG_VAL1','BLDG_SQFT','LOT_SIZE','ASSMTVAL1']
-	df = pd.read_csv(path)
-	df = df[list_of_feature]
+	ori_df = pd.read_csv(path)
+	df = ori_df[list_of_feature]
 	X = df.values
-	####################PCA-reduced data for visualization###############
-	pca = PCA(n_components=4) 
-	pca.fit(X)
-	print(pca.explained_variance_ratio_)
+	X = preprocessing.scale(X)
 
+	print "head of sample"
+	print df.head()
+	####################PCA-reduced data for visualization###############
+	pca = PCA(n_components=3) 
+	pca.fit(X)
 	X = pca.transform(X)
-	X = StandardScaler().fit_transform(X)
+	
+	print "PCA"
+	print(pca.explained_variance_ratio_)
+	print (pca.components_)
+
+	#X = StandardScaler().fit_transform(X)
+    
 
 	print X
 	print X.shape
 	# Compute DBSCAN
-	db = DBSCAN(eps=0.2, min_samples=10).fit(X)
+	db = DBSCAN(eps=0.15, min_samples=60).fit(X)
 	core_samples = db.core_sample_indices_
 	labels = db.labels_
 	n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
@@ -127,31 +142,124 @@ def  dbscan(path):
 	# print("Adjusted Mutual Information: %0.3f" % metrics.adjusted_mutual_info_score(labels_true, labels))
 	#print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(X, labels))
 
+
+	x_min, x_max = X[:, 0].min(), X[:, 0].max()
+	y_min, y_max = X[:, 1].min(), X[:, 1].max()
+    
+	print x_min,x_max,y_min,y_max
+
+	fig = plt.figure()
+	ax = fig.add_subplot(111,projection='3d')
+
 	unique_labels = set(labels)
 	colors = pl.cm.Spectral(np.linspace(0, 1, len(unique_labels)))
 	for k, col in zip(unique_labels, colors):
 		if k == -1:
 			col = 'k'
-			markersize = 6
+			markersize = 2
 		class_members = [index[0] for index in np.argwhere(labels == k)]
 		cluster_core_samples = [index for index in core_samples if labels[index] == k]
 	
 		for index in class_members:
 			x = X[index]
 			if index in core_samples and k != -1:
-			    markersize = 14
+			    markersize = 15
 			else:
-			    markersize = 6
-			pl.plot(x[0], x[1], 'o', markerfacecolor=col,markeredgecolor='k', markersize=markersize)
-	pl.title('Estimated number of clusters: %d' % n_clusters_)
-	pl.show()
-    
-    	
+			    markersize = 2
+			ax.scatter(x[0], x[1],x[2],marker='o', c=col, s=markersize)
+	ax.set_title('Estimated number of clusters: %d' % n_clusters_)
+	ax.set_xlim3d([-2,2])
+	ax.set_ylim([-2,2])
+	ax.set_zlim([-2,2])
+	plt.show()
+	print db.labels_
+	return 	pd.concat([ori_df,pd.DataFrame({'labels':db.labels_})],axis=1)
+     
+
+def plot_cluster(reduced_data,k_means_labels,k_means_cluster_centers,n_clusters = 3):
+
+
+	x_min, x_max = reduced_data[:, 0].min(), reduced_data[:, 0].max()
+	y_min, y_max = reduced_data[:, 1].min(), reduced_data[:, 1].max()
+	#z_min, z_max = reduced_data[:, 2].min(), reduced_data[:, 2].max()
+	
+	fig = plt.figure()
+	#fig.subplots_adjust(left=0.02, right=0.98, bottom=0.05, top=0.9)
+	colors = ['#4EACC5', '#FF9C34', '#4E9A06']
+
+
+	ax = fig.add_subplot(111)
+	
+
+	for k, col in zip(range(n_clusters), colors):
+		my_members = k_means_labels == k
+		print k
+		#print 'k=%s'%k,reduced_data[my_members, 0], reduced_data[my_members, 1]
+		cluster_center = k_means_cluster_centers[k]
+		ax.scatter(reduced_data[my_members, 0], reduced_data[my_members, 1], c=col, marker='.',s=50)
+		ax.scatter(cluster_center[0], cluster_center[1],c=col,marker='o', s=100)
+	
+	ax.set_title('Property Clustring')
+	ax.set_xlabel('X Label')
+	ax.set_ylabel('Y Label')
+	#ax.set_zlabel('Z Label')
+	
+	ax.set_xlim(-2,2)
+	ax.set_ylim(-2,2)
+	#ax.set_zlim3d(z_min,z_max)
+
+	plt.show()
+
+
+def kmeans(path,n_clusters):
+	"""
+	   kemans culstering algoritgm, apply pca to visualize
+	"""
+
+	list_of_feature =['ZIP','BED','HALF_BATH','BATH','YR_BUILT','FLOORS','LAND_VAL1','BLDG_VAL1','BLDG_SQFT','LOT_SIZE','ASSMTVAL1']
+	df = pd.read_csv(path)
+	df = df[list_of_feature]
+	data = df.values
+	data = preprocessing.scale(data)
+	pca = PCA(n_components=2)
+	pca.fit(data)
+	reduced_data = pca.transform(data)
+	print(pca.explained_variance_ratio_)
+	print(pca.components_)
+
+
+
+	k_means = KMeans(init='k-means++', n_clusters=n_clusters,n_init=10)
+	k_means.fit(reduced_data)
+	
+
+
+	k_means_labels = k_means.labels_
+	k_means_cluster_centers = k_means.cluster_centers_
+	k_means_labels_unique = np.unique(k_means_labels)
+
+	print k_means_labels,k_means_cluster_centers,k_means.inertia_
+
+	plot_cluster(reduced_data,k_means_labels,k_means_cluster_centers,n_clusters)
+
+def write_to_db(df):
+	"""
+		Write processed data to mysql 
+	"""
+	con = MySQLdb.connect(user='root',host='127.0.0.1',db='pa')
+	sql.write_frame(df,con=con,name='pa',if_exists='replace',flavor='mysql')
+
 if __name__ == '__main__':
 	#df = data_import("/Users/dingmia/Documents/data/environment-impact/Prop_Ptx.dbf")
 	#df = get_subset(df)
 	#print "geo_coding"
 	#geo_coding('./subset_10.csv')
 	print "dbscan"
-	dbscan('./subset_geo_10.csv')
-	#explore(df)
+	df = dbscan('./subset_geo_10.csv')
+	print df.head()
+
+	#write_to_db(df)
+	# print('K-means')
+	# kmeans('./subset_geo_10.csv',2)
+	df.to_csv('./subset_geo_10_label.csv')
+	
